@@ -65,7 +65,7 @@ riscv-int8-cache-lab/
 #### 算子语义
 给定按行主序存储的有符号矩阵 $A \in [-128, 127]^{D \times N}$ 与有符号列向量 $B \in [-128, 127]^{N}$，输出向量 $C \in \mathbb{Z}_{32}^{D}$ 的第 $i$ 行元素定义为：
 
-$$C[i] = \sum_{j=0}^{N-1} \operatorname{sext}_{32}\!\big(A[i \cdot N + j]\big) \times \operatorname{sext}_{32}\!\big(B[j]\big) \pmod{2^{32}}$$
+$$C[i] = \sum_{j=0}^{N-1} \mathrm{sext}_{32}(A[i \cdot N + j]) \times \mathrm{sext}_{32}(B[j])$$
 
 - **C11 参考实现（[`sw/gemv_ref.c`](sw/gemv_ref.c)）**：为避免 C 语言有符号整数溢出未定义行为（UB），在 `uint32_t` 域中完成乘加累积，最后按二补数语义转换为 `int32_t`，与 32 位 RISC-V 通用寄存器的截断行为严格一致。
 - **RV32IM 标量实现（[`sw/gemv_rars.asm`](sw/gemv_rars.asm) / [`sw/gemv_scalar.c`](sw/gemv_scalar.c)）**：内层循环每次通过 `lb` 加载 1 字节并自动符号扩展至 32 位，执行 `mul` 与 `add`，列指针步进 1 字节。
@@ -85,7 +85,7 @@ $$C[i] = \sum_{j=0}^{N-1} \operatorname{sext}_{32}\!\big(A[i \cdot N + j]\big) \
 
 **指令级语义**：
 
-$$\text{rd} \leftarrow \text{rd} + \sum_{k=0}^{3} \operatorname{sext}_{32}\!\big(\text{rs1}[8k+7 : 8k]\big) \times \operatorname{sext}_{32}\!\big(\text{rs2}[8k+7 : 8k]\big)$$
+$$\mathrm{rd} \leftarrow \mathrm{rd} + \sum_{k=0}^{3} \mathrm{sext}_{32}(\mathrm{rs1}[8k+7 : 8k]) \times \mathrm{sext}_{32}(\mathrm{rs2}[8k+7 : 8k])$$
 
 > **硬件分工说明**：仓库中的 [`rtl/mac.v`](rtl/mac.v) 模块负责计算四路字节乘积之和 `z[31:0]`；当集成至支持 `MAC4` 的 RV32 处理器核时，由处理器写回通路将 `z` 与目标寄存器 `rd` 原值相加写回。
 
