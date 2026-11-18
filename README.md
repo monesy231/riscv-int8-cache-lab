@@ -10,9 +10,9 @@
 
 | 子系统 | 模块 / 文件 | 关键架构参数与设计特性 |
 | :--- | :--- | :--- |
-| **GEMV 算子实现** | [`sw/`](sw/) | 有符号 `int8_t` 矩阵 $A_{D \times N}$ 乘向量 $B_{N \times 1} \to \text{int32\_t } C_{D \times 1}$，遵循 RV32 低 32 位二补数截断语义；涵盖 C11 参考、RARS 汇编、RV32IM 标量内联汇编及 `MAC4` 自定义指令内联汇编 |
+| **GEMV 算子实现** | [`sw/`](sw/) | 有符号 `int8_t` 矩阵 $A_{D \times N}$ 乘向量 $B_{N \times 1}$ 输出 `int32_t` 向量 $C_{D \times 1}$，遵循 RV32 低 32 位二补数截断语义；涵盖 C11 参考、RARS 汇编、RV32IM 标量内联汇编及 `MAC4` 自定义指令内联汇编 |
 | **自定义指令 `MAC4`** | [`sw/gemv_mac4.c`](sw/gemv_mac4.c) | R-Type 格式，占用 `custom-0`（`opcode = 7'b0001011` / `0x0B`，`funct3 = 0x0`，`funct7 = 0x00`），单指令完成 `rs1`、`rs2` 中 4 对有符号 INT8 解包相乘与四路求和累加 |
-| **有符号 Booth 乘法器** | [`rtl/multiplier.v`](rtl/multiplier.v) | 32 位有符号输入 $\to$ 64 位乘积输出；采用 33 位符号扩展累加器防 `-2^31` 取反溢出；Radix-2 Booth 移位加减架构，固定 **32 个时钟上升沿**完成计算，支持 `start` / `busy` 握手 |
+| **有符号 Booth 乘法器** | [`rtl/multiplier.v`](rtl/multiplier.v) | 32 位有符号输入 → 64 位乘积输出；采用 33 位符号扩展累加器防 `-2^31` 取反溢出；Radix-2 Booth 移位加减架构，固定 **32 个时钟上升沿**完成计算，支持 `start` / `busy` 握手 |
 | **四路 INT8 点积单元** | [`rtl/mac.v`](rtl/mac.v) | 并行例化 4 个 `multiplier` 核，对两路 32 位输入按字节切片并符号扩展至 32 位，输出四路乘积之和（范围 $[-65024, +65536]$），固定 **33 个时钟上升沿**完成计算 |
 | **指令缓存 (ICache)** | [`rtl/ICache.v`](rtl/ICache.v) | 1 KiB 直接映射（64 行 × 16 B/行，每行 4 个 32 位字）；缓存 `0x0000_0000`–`0x0000_7FFF`（32 KiB 空间）；4 状态机驱动 128 位整行对齐重填与单周期字选返回 |
 | **数据缓存 (DCache)** | [`rtl/DCache.v`](rtl/DCache.v) | 1 KiB 直接映射（64 行 × 16 B/行）；读写双状态机共享单端口同步写优先行 RAM（[`rtl/cache_line_ram.v`](rtl/cache_line_ram.v)）；**Write-Through + No-Write-Allocate** 策略；支持 4 位字节掩码（`data_wen`）、CPU 停顿同地址重读抑制及 `0xFFFF_xxxx` MMIO 旁路 |
@@ -126,7 +126,7 @@ $$\text{rd} \leftarrow \text{rd} + \sum_{k=0}^{3} \operatorname{sext}_{32}\!\big
 - **快速复位与写优先转发**：`cache_line_ram` 将有效位独立为 `reg [63:0] valid`，异步高电平 `rst` 仅需单拍即可将全部 64 行置为无效；同拍写使能 `we` 有效时直接将新写入的 `{1'b1, d[132:0]}` 转发至输出寄存器 `q`（Write-First）。
 
 #### ICache 控制流（[`rtl/ICache.v`](rtl/ICache.v)）
-采用 4 状态有限状态机（`IDLE` $\to$ `LOOKUP` $\to$ `WAIT_RRDY` $\to$ `WAIT_RDATA`）：
+采用 4 状态有限状态机（`IDLE` → `LOOKUP` → `WAIT_RRDY` → `WAIT_RDATA`）：
 1. **命中路径**：`IDLE` 接收 `inst_rreq` 并触发 `U_isram` 同步读；下一拍在 `LOOKUP` 比较 `cache_valid && (cache_tag == req_tag)`。若命中，当拍根据 `req_word_off` 选出 32 位指令并拉高 1 周期 `inst_valid`。
 2. **缺失与整行重填路径**：若未命中，将访存地址按 16 字节边界对齐（`{req_addr[31:4], 4'b0000}`）并置 `cpu_ren = 4'hF`。若此时 `dev_rrdy` 已就绪则直接进入 `WAIT_RDATA`，否则在 `WAIT_RRDY` 等待总线就绪；待下游返回 `dev_rvalid` 与 128 位缓存行数据后，写入 `U_isram` 并同时将所请求的 32 位字输出至 `inst_out`。
 
